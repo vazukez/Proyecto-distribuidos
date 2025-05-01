@@ -20,7 +20,6 @@ def query_cache(_id, host='localhost', port=5000):
         return f"ERROR {str(e)}"
 
 def run_generator(dist, params, total_queries, mongo_uri, db_name, coll_name, cache_host, cache_port):
-    # Conectar a MongoDB para obtener los _ids
     client = MongoClient(mongo_uri)
     coll = client[db_name][coll_name]
     print(f"[Generator] Conectado a MongoDB → {db_name}.{coll_name}")
