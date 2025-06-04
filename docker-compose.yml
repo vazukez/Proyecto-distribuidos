@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:6
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - wazenet
+
+  scraper:
+    build:
+      context: ./scraper
+    container_name: scraper
+    depends_on:
+      - mongo
+    networks:
+      - wazenet
+    command: python scraper.py
+
+  cache:
+    build:
+      context: ./cache
+    container_name: cache
+    depends_on:
+      - mongo
+    ports:
+      - "5000:5000"
+    networks:
+      - wazenet
+    command:
+      ["python","cache.py","--policy","lru","--size","1000","--mongo","mongodb://mongo:27017/","--db","Waze","--coll","Peticiones","--port","5000"]
+
+  generator:
+    build:
+      context: ./generador
+    container_name: generator
+    depends_on:
+      - cache
+      - mongo
+    networks:
+      - wazenet
+    command:
+      ["python","generator.py","--dist","poisson","--low","0.5","--high","2.0","--n","500","--mongo","mongodb://mongo:27017/","--db","Waze","--coll","Peticiones","--cache_host","cache","--cache_port","5000"]
+
+  pig:
+    build:
+      context: ./pig
+    container_name: pig
+    volumes:
+      - ./data:/data
+      - ./pig:/scripts
+    working_dir: /data
+    networks:
+      - wazenet
+    stdin_open: true
+    tty: true
+
+volumes:
+  mongo-data:
+
+networks:
+  wazenet:
