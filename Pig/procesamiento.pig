@@ -1,5 +1,3 @@
--- procesamiento.pig actualizado
-
 -- Cargar todos los campos incluyendo ID interno y coordenadas
 raw = LOAD '/data/incidentes.csv' USING PigStorage(',') AS (
     mongo_id:chararray,
