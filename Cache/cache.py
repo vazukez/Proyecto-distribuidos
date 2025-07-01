@@ -1,31 +1,17 @@
-from collections import OrderedDict, defaultdict
-from pymongo import MongoClient
-from bson import ObjectId, json_util
+from collections import OrderedDict
 import socket
 import time
 import argparse
 import json
+import requests
 
-class CacheBase:
+class LRUCache:
     def __init__(self, size):
         self.size = size
         self.cache = {}
+        self.order = OrderedDict()
         self.hits = 0
         self.misses = 0
-
-    def get(self, key):
-        raise NotImplementedError
-
-    def put(self, key, value):
-        raise NotImplementedError
-
-    def stats(self):
-        return {"hits": self.hits, "misses": self.misses}
-
-class LRUCache(CacheBase):
-    def __init__(self, size):
-        super().__init__(size)
-        self.order = OrderedDict()
 
     def get(self, key):
         if key in self.order:
@@ -46,42 +32,41 @@ class LRUCache(CacheBase):
             self.order[key] = None
         self.cache[key] = value
 
-class LFUCache(CacheBase):
-    def __init__(self, size):
-        super().__init__(size)
-        self.freq = defaultdict(int)
+    def stats(self):
+        return {"hits": self.hits, "misses": self.misses}
 
-    def get(self, key):
-        if key in self.cache:
-            self.freq[key] += 1
-            self.hits += 1
-            return self.cache[key]
-        self.misses += 1
+def fetch_from_elastic(elastic_url, index, doc_id):
+    try:
+        url = f"{elastic_url}/{index}/_search"
+        query = {
+            "query": {
+                "term": {
+                    "id.keyword": doc_id
+                }
+            }
+        }
+        res = requests.post(url, json=query)
+        if res.status_code == 200:
+            hits = res.json().get("hits", {}).get("hits", [])
+            if hits:
+                return hits[0]["_source"]
         return None
-
-    def put(self, key, value):
-        if key not in self.cache and len(self.cache) >= self.size:
-            least_used = min(self.freq, key=lambda k: self.freq[k])
-            del self.cache[least_used]
-            del self.freq[least_used]
-        self.cache[key] = value
-        self.freq[key] += 1
+    except Exception as e:
+        print(f"[Elastic] Error al consultar '{doc_id}': {e}")
+        return None
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--policy', choices=['lru', 'lfu'], required=True)
     parser.add_argument('--size', type=int, default=100)
-    parser.add_argument('--mongo', default='mongodb://localhost:27017/')
-    parser.add_argument('--db', default='Waze')
-    parser.add_argument('--coll', default='Peticiones')
+    parser.add_argument('--elastic', default='http://elasticsearch:9200')
+    parser.add_argument('--index', default='eventos_waze')
     parser.add_argument('--port', type=int, default=5000)
     args = parser.parse_args()
 
-    print(f"[Cache] Iniciando con política {args.policy.upper()} y tamaño {args.size}")
-    cache = LRUCache(args.size) if args.policy == 'lru' else LFUCache(args.size)
+    print(f"[Cache] LRU Cache iniciado con tamaño {args.size}")
+    print(f"[Cache] Consultando Elasticsearch en {args.elastic}, índice '{args.index}'")
 
-    client = MongoClient(args.mongo)
-    collection = client[args.db][args.coll]
+    cache = LRUCache(args.size)
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind(("0.0.0.0", args.port))
@@ -104,20 +89,14 @@ def main():
             doc = cache.get(key)
             if doc:
                 latency = time.time() - start
-                response = f"HIT {key} ({latency:.4f}s)\n{json_util.dumps(doc)}\n"
+                response = f"HIT {key} ({latency:.4f}s)\n{json.dumps(doc)}\n"
                 conn.sendall(response.encode())
             else:
-                try:
-                    object_id = ObjectId(key)
-                except Exception:
-                    conn.sendall(f"INVALID_ID {key}\n".encode())
-                    continue
-
-                doc = collection.find_one({"_id": object_id})
+                doc = fetch_from_elastic(args.elastic, args.index, key)
                 if doc:
                     cache.put(key, doc)
                     latency = time.time() - start
-                    response = f"MISS {key} ({latency:.4f}s)\n{json_util.dumps(doc)}\n"
+                    response = f"MISS {key} ({latency:.4f}s)\n{json.dumps(doc)}\n"
                     conn.sendall(response.encode())
                 else:
                     conn.sendall(f"NOTFOUND {key}\n".encode())
