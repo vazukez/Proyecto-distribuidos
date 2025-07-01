@@ -26,25 +26,41 @@ services:
       context: ./cache
     container_name: cache
     depends_on:
-      - mongo
+      - elasticsearch
     ports:
       - "5000:5000"
     networks:
       - wazenet
     command:
-      ["python","cache.py","--policy","lru","--size","1000","--mongo","mongodb://mongo:27017/","--db","Waze","--coll","Peticiones","--port","5000"]
+      [
+        "python", "cache.py",
+        "--size", "1000",
+        "--elastic", "http://elasticsearch:9200",
+        "--index", "eventos_waze",
+        "--port", "5000"
+      ]
+
 
   generator:
     build:
-      context: ./generador
+      context: ./genreador de trafico
     container_name: generator
     depends_on:
       - cache
-      - mongo
+      - elasticsearch
     networks:
       - wazenet
     command:
-      ["python","generator.py","--dist","poisson","--low","0.5","--high","2.0","--n","500","--mongo","mongodb://mongo:27017/","--db","Waze","--coll","Peticiones","--cache_host","cache","--cache_port","5000"]
+      [
+        "python", "generator.py",
+        "--lmbda", "1.0",
+        "--n", "100",
+        "--elastic", "http://elasticsearch:9200",
+        "--index", "eventos_waze",
+        "--cache_host", "cache",
+        "--cache_port", "5000"
+      ]
+
 
   pig:
     build:
@@ -58,6 +74,30 @@ services:
       - wazenet
     stdin_open: true
     tty: true
+  
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.18
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    networks:
+      - wazenet
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.18
+    container_name: kibana
+    depends_on:
+      - elasticsearch
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    networks:
+      - wazenet
+
 
 volumes:
   mongo-data:
