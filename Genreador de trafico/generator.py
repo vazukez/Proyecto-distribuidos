@@ -2,15 +2,12 @@ import argparse
 import time
 import random
 import socket
-from pymongo import MongoClient
+import requests
 from datetime import datetime
 import csv
 
 def poisson_interarrival(lmbda):
     return random.expovariate(lmbda)
-
-def uniform_interarrival(low, high):
-    return random.uniform(low, high)
 
 def query_cache(_id, host='localhost', port=5000):
     try:
@@ -26,23 +23,38 @@ def log_to_csv(filepath, row):
         writer = csv.writer(file)
         writer.writerow(row)
 
-def run_generator(dist, params, total_queries, mongo_uri, db_name, coll_name, cache_host, cache_port):
-    client = MongoClient(mongo_uri)
-    coll = client[db_name][coll_name]
-    ids = [doc['_id'] for doc in coll.find({}, {'_id': 1})]
+def get_ids_from_elastic(elastic_url, index, limit=1000):
+    try:
+        query = {
+            "_source": ["id"],
+            "size": limit,
+            "query": { "match_all": {} }
+        }
+        r = requests.post(f"{elastic_url}/{index}/_search", json=query)
+        if r.status_code == 200:
+            results = r.json()["hits"]["hits"]
+            return [doc["_source"]["id"] for doc in results if "id" in doc["_source"]]
+        else:
+            print("Error al consultar Elasticsearch:", r.text)
+            return []
+    except Exception as e:
+        print("Error:", e)
+        return []
 
+def run_generator(lmbda, total_queries, elastic_url, index, cache_host, cache_port):
+    ids = get_ids_from_elastic(elastic_url, index)
     if not ids:
-        print("No se encontraron documentos.")
+        print("⛔ No se encontraron IDs válidos en Elasticsearch.")
         return
 
-    print(f"[Generator] {len(ids)} IDs cargados. Generando {total_queries} consultas usando '{dist}'...")
+    print(f"[Generator] {len(ids)} IDs cargados desde Elastic. Generando {total_queries} consultas (Poisson λ={lmbda})...")
     csv_file = 'traffic_log.csv'
     with open(csv_file, 'w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['timestamp', 'operation', 'id', 'status', 'latency'])
 
     for i in range(1, total_queries + 1):
-        wait = poisson_interarrival(params['lmbda']) if dist == 'poisson' else uniform_interarrival(params['low'], params['high'])
+        wait = poisson_interarrival(lmbda)
         time.sleep(wait)
 
         _id = str(random.choice(ids))
@@ -52,42 +64,31 @@ def run_generator(dist, params, total_queries, mongo_uri, db_name, coll_name, ca
         timestamp = datetime.now().isoformat(timespec='seconds')
 
         if response.startswith("HIT"):
-            operation, *_ = response.split()
             status = "HIT"
         elif response.startswith("MISS"):
-            operation, *_ = response.split()
             status = "MISS"
         elif response.startswith("INVALID_ID"):
-            operation = "GET"
             status = "INVALID"
         elif response.startswith("NOTFOUND"):
-            operation = "GET"
             status = "NOTFOUND"
         elif response.startswith("ERROR"):
-            operation = "GET"
             status = "ERROR"
         else:
-            operation = "GET"
             status = "UNKNOWN"
 
-        print(f"[{i:04d}] {operation} {_id} → {status} · {latency:.3f}s")
-        log_to_csv(csv_file, [timestamp, operation, _id, status, round(latency, 4)])
+        print(f"[{i:04d}] {_id} → {status} · {latency:.3f}s")
+        log_to_csv(csv_file, [timestamp, "GET", _id, status, round(latency, 4)])
 
     print("[Generator] Finalizado.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generador de tráfico sintético para Waze events")
-    parser.add_argument('--dist', choices=['poisson','uniform'], required=True)
+    parser = argparse.ArgumentParser(description="Generador de tráfico para caché con Elasticsearch")
     parser.add_argument('--lmbda', type=float, default=1.0)
-    parser.add_argument('--low', type=float, default=0.5)
-    parser.add_argument('--high', type=float, default=2.0)
     parser.add_argument('--n', type=int, default=100)
-    parser.add_argument('--mongo', type=str, default="mongodb://localhost:27017/")
-    parser.add_argument('--db', type=str, default="Waze")
-    parser.add_argument('--coll', type=str, default="Peticiones")
+    parser.add_argument('--elastic', type=str, default="http://elasticsearch:9200")
+    parser.add_argument('--index', type=str, default="eventos_waze")
     parser.add_argument('--cache_host', type=str, default='localhost')
     parser.add_argument('--cache_port', type=int, default=5000)
 
     args = parser.parse_args()
-    params = {'lmbda': args.lmbda, 'low': args.low, 'high': args.high}
-    run_generator(args.dist, params, args.n, args.mongo, args.db, args.coll, args.cache_host, args.cache_port)
+    run_generator(args.lmbda, args.n, args.elastic, args.index, args.cache_host, args.cache_port)
