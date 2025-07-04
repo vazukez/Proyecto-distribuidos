@@ -4,10 +4,8 @@ import requests
 from pymongo import MongoClient
 from datetime import datetime
 
-# API pública antigua de Waze (sigue funcionando en modo limitado)
 WAZE_URL = "https://www.waze.com/live-map/api/georss"
 
-# Región Metropolitana — zona más amplia (ajustable)
 PARAMS = {
     "top": -33.3,
     "bottom": -33.6,
