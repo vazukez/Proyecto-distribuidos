@@ -44,7 +44,7 @@ def get_ids_from_elastic(elastic_url, index, limit=1000):
 def run_generator(lmbda, total_queries, elastic_url, index, cache_host, cache_port):
     ids = get_ids_from_elastic(elastic_url, index)
     if not ids:
-        print("⛔ No se encontraron IDs válidos en Elasticsearch.")
+        print("No se encontraron IDs válidos en Elasticsearch.")
         return
 
     print(f"[Generator] {len(ids)} IDs cargados desde Elastic. Generando {total_queries} consultas (Poisson λ={lmbda})...")
