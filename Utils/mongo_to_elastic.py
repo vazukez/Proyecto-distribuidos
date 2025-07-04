@@ -6,12 +6,10 @@ MONGO_URI = "host.docker.internal:27017"
 ELASTIC_URL = "http://localhost:9200"
 INDEX_NAME = "eventos_waze"
 
-# 1. Eliminar índice anterior si existe
-print(f"🧹 Borrando índice anterior '{INDEX_NAME}' si existe...")
+print(f"Borrando índice anterior '{INDEX_NAME}' si existe...")
 requests.delete(f"{ELASTIC_URL}/{INDEX_NAME}")
 
-# 2. Crear índice con mapping correcto
-print("📦 Creando índice con mapping 'geo_point'...")
+print("Creando índice con mapping 'geo_point'...")
 mapping = {
     "mappings": {
         "properties": {
@@ -22,16 +20,14 @@ mapping = {
 }
 r = requests.put(f"{ELASTIC_URL}/{INDEX_NAME}", json=mapping)
 if r.status_code != 200:
-    print("⛔ Error creando índice:", r.text)
+    print("Error creando índice:", r.text)
     exit(1)
 
-# 3. Conexión a MongoDB
-print("🔌 Conectando a MongoDB...")
+print("Conectando a MongoDB...")
 client = MongoClient(MONGO_URI)
 collection = client["Waze"]["Eventos"]
 
-# 4. Insertar documentos en Elasticsearch
-print("🚀 Indexando documentos...")
+print("Indexando documentos...")
 
 for doc in collection.find():
     location = doc.get("location", {})
@@ -56,15 +52,15 @@ for doc in collection.find():
         "pubMillis": pubMillis,
         "x": x,
         "y": y,
-        "location": f"{y},{x}" if x is not None and y is not None else None  # geo_point formato correcto
+        "location": f"{y},{x}" if x is not None and y is not None else None  
     }
 
     try:
         r = requests.post(f"{ELASTIC_URL}/{INDEX_NAME}/_doc", json=doc_clean)
         if r.status_code not in (200, 201):
-            print("⛔ Error al indexar:", r.text)
+            print("Error al indexar:", r.text)
     except Exception as e:
-        print("💥 Error:", e)
+        print("Error:", e)
 
     time.sleep(0.05)
 
